@@ -2,6 +2,7 @@ package com.f1.api.client;
 
 import com.f1.api.exception.OpenF1Exception;
 import com.f1.api.model.Driver;
+import com.f1.api.model.Lap;
 import com.f1.api.model.Position;
 import com.f1.api.model.Session;
 import com.f1.api.model.SessionResult;
@@ -74,6 +75,20 @@ public class OpenF1Client {
                 .onStatus(HttpStatusCode::is4xxClientError, toException("position"))
                 .onStatus(HttpStatusCode::is5xxServerError, toException("position"))
                 .bodyToFlux(Position.class)
+                .collectList()
+                .block();
+    }
+
+    public List<Lap> getLaps(int sessionKey) {
+        return webClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/laps")
+                        .queryParam("session_key", sessionKey)
+                        .build())
+                .retrieve()
+                .onStatus(HttpStatusCode::is4xxClientError, toException("lap"))
+                .onStatus(HttpStatusCode::is5xxServerError, toException("lap"))
+                .bodyToFlux(Lap.class)
                 .collectList()
                 .block();
     }
