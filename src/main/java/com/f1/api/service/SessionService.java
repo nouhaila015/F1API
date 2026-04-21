@@ -1,34 +1,56 @@
 package com.f1.api.service;
 
-import com.f1.api.client.OpenF1Client;
+import com.f1.api.model.entity.SessionEntity;
 import com.f1.api.model.Session;
+import com.f1.api.repository.SessionRepository;
+import com.f1.api.sync.DataSyncService;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
-import java.util.Comparator;
 import java.util.List;
 
 @Service
 public class SessionService {
 
-    private final OpenF1Client openF1Client;
+    private final SessionRepository sessionRepository;
+    private final DataSyncService dataSyncService;
 
-    public SessionService(OpenF1Client openF1Client) {
-        this.openF1Client = openF1Client;
+    public SessionService(SessionRepository sessionRepository, DataSyncService dataSyncService) {
+        this.sessionRepository = sessionRepository;
+        this.dataSyncService = dataSyncService;
     }
 
-    @Cacheable("seasonRaces")
+    @Cacheable(value = "seasonRaces", condition = "@dataSyncService.isSynced(#year)")
     public List<Session> getSeasonRaces(int year) {
-        return openF1Client.getSessions(year).stream()
-                .filter(s -> "Race".equalsIgnoreCase(s.sessionType()))
-                .sorted(Comparator.comparing(Session::dateStart))
+        dataSyncService.triggerSyncIfNeeded(year);
+        return sessionRepository
+                .findByYearAndSessionTypeOrderByDateStartAsc(year, "Race")
+                .stream()
+                .map(this::toModel)
                 .toList();
     }
 
-    @Cacheable("pointsSessions")
+    @Cacheable(value = "pointsSessions", condition = "@dataSyncService.isSynced(#year)")
     public List<Session> getPointsSessions(int year) {
-        return openF1Client.getSessions(year).stream()
-                .filter(s -> "Race".equalsIgnoreCase(s.sessionType()) || "Sprint".equalsIgnoreCase(s.sessionType()))
+        dataSyncService.triggerSyncIfNeeded(year);
+        return sessionRepository
+                .findByYearAndSessionTypeIn(year, List.of("Race", "Sprint"))
+                .stream()
+                .map(this::toModel)
                 .toList();
+    }
+
+    private Session toModel(SessionEntity e) {
+        return new Session(
+                e.getCircuitShortName(),
+                e.getCountryCode(),
+                e.getCountryName(),
+                e.getDateEnd(),
+                e.getDateStart(),
+                e.getSessionKey(),
+                e.getSessionName(),
+                e.getSessionType(),
+                e.getYear()
+        );
     }
 }

@@ -1,141 +1,150 @@
 package com.f1.api.service;
 
-import com.f1.api.client.OpenF1Client;
-import com.f1.api.dto.DriverStatsDTO;
-import com.f1.api.dto.RaceResultDTO;
-import com.f1.api.model.Driver;
-import com.f1.api.model.Session;
-import com.f1.api.model.SessionResult;
+import com.f1.api.model.dto.DriverStatsDTO;
+import com.f1.api.model.dto.RaceResultDTO;
+import com.f1.api.model.entity.DriverEntity;
+import com.f1.api.model.entity.SessionEntity;
+import com.f1.api.model.entity.SessionResultEntity;
+import com.f1.api.repository.DriverRepository;
+import com.f1.api.repository.SessionRepository;
+import com.f1.api.repository.SessionResultRepository;
+import com.f1.api.sync.DataSyncService;
 import com.f1.api.utils.F1ScoringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 @Service
 public class RaceService {
 
-    private final OpenF1Client openF1Client;
-    private final SessionService sessionService;
+    private static final Logger log = LoggerFactory.getLogger(RaceService.class);
+    private static final String UNKNOWN = "Unknown";
 
-    public RaceService(OpenF1Client openF1Client, SessionService sessionService) {
-        this.openF1Client = openF1Client;
-        this.sessionService = sessionService;
+    private final SessionRepository sessionRepository;
+    private final DriverRepository driverRepository;
+    private final SessionResultRepository sessionResultRepository;
+    private final DataSyncService dataSyncService;
+
+    public RaceService(SessionRepository sessionRepository, DriverRepository driverRepository,
+                       SessionResultRepository sessionResultRepository, DataSyncService dataSyncService) {
+        this.sessionRepository = sessionRepository;
+        this.driverRepository = driverRepository;
+        this.sessionResultRepository = sessionResultRepository;
+        this.dataSyncService = dataSyncService;
     }
 
     @Cacheable("raceResults")
     public List<RaceResultDTO> getRaceResults(int sessionKey) {
-        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            var driversFuture = CompletableFuture.supplyAsync(() -> openF1Client.getDrivers(sessionKey), executor);
-            var resultsFuture = CompletableFuture.supplyAsync(() -> openF1Client.getSessionResults(sessionKey), executor);
-            var lapsFuture    = CompletableFuture.supplyAsync(() -> openF1Client.getLaps(sessionKey), executor);
+        log.info("Loading race results for session {} from DB", sessionKey);
 
-            CompletableFuture.allOf(driversFuture, resultsFuture, lapsFuture).join();
+        Map<Integer, DriverEntity> driverMap = driverRepository.findBySessionKey(sessionKey)
+                .stream()
+                .collect(Collectors.toMap(DriverEntity::getDriverNumber, d -> d, (a, b) -> a));
 
-            Map<Integer, Driver> driverMap = driversFuture.join().stream()
-                    .collect(Collectors.toMap(Driver::driverNumber, d -> d, (a, b) -> a));
-            int fastestLapDriver = F1ScoringUtils.findFastestLapDriverNumber(lapsFuture.join());
+        int fastestLapDriver = sessionRepository.findById(sessionKey)
+                .map(s -> s.getFastestLapDriverNumber() != null ? s.getFastestLapDriverNumber() : -1)
+                .orElse(-1);
 
-            return resultsFuture.join().stream()
-                    .map(result -> {
-                        Driver d = driverMap.get(result.driverNumber());
-                        return new RaceResultDTO(
-                                result.position(),
-                                result.driverNumber(),
-                                d != null ? d.fullName() : "Unknown",
-                                d != null ? d.nameAcronym() : "",
-                                d != null ? d.teamName() : "",
-                                d != null ? d.teamColour() : "",
-                                result.gapToLeader(),
-                                result.driverNumber() == fastestLapDriver,
-                                result.dnf(),
-                                result.dns(),
-                                result.dsq());
-                    })
-                    .sorted(Comparator.comparingInt(r -> r.dnf() || r.dns() || r.dsq() ? Integer.MAX_VALUE : r.position()))
-                    .toList();
-        }
+        return sessionResultRepository.findBySessionKey(sessionKey)
+                .stream()
+                .map(result -> {
+                    DriverEntity d = driverMap.get(result.getDriverNumber());
+                    int position = result.getPosition() != null ? result.getPosition() : 0;
+                    return new RaceResultDTO(
+                            position,
+                            result.getDriverNumber(),
+                            d != null ? d.getFullName() : UNKNOWN,
+                            d != null ? d.getNameAcronym() : "",
+                            d != null ? d.getTeamName() : "",
+                            d != null ? d.getTeamColour() : "",
+                            result.getGapToLeader(),
+                            result.getDriverNumber() == fastestLapDriver,
+                            result.isDnf(),
+                            result.isDns(),
+                            result.isDsq());
+                })
+                .sorted(Comparator.comparingInt(r -> r.dnf() || r.dns() || r.dsq() ? Integer.MAX_VALUE : r.position()))
+                .toList();
     }
 
-    @Cacheable("driverStats")
+    @Cacheable(value = "driverStats", condition = "@dataSyncService.isSynced(#year)")
     public DriverStatsDTO getDriverStats(int driverNumber, int year) {
-        List<Session> races = sessionService.getSeasonRaces(year);
+        log.info("Loading stats for driver {} in year {} from DB", driverNumber, year);
+        dataSyncService.triggerSyncIfNeeded(year);
 
-        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            List<CompletableFuture<List<SessionResult>>> resultFutures = races.stream()
-                    .map(race -> CompletableFuture.supplyAsync(() -> openF1Client.getSessionResults(race.sessionKey()), executor))
-                    .toList();
+        List<SessionEntity> raceSessions = sessionRepository
+                .findByYearAndSessionTypeOrderByDateStartAsc(year, "Race");
 
-            CompletableFuture.allOf(resultFutures.toArray(new CompletableFuture[0])).join();
-
-            record RaceEntry(Session race, SessionResult result) {}
-            List<RaceEntry> driverRaces = new ArrayList<>();
-            for (int i = 0; i < races.size(); i++) {
-                final int idx = i;
-                resultFutures.get(idx).join().stream()
-                        .filter(r -> r.driverNumber() == driverNumber)
-                        .findFirst()
-                        .ifPresent(r -> driverRaces.add(new RaceEntry(races.get(idx), r)));
-            }
-
-            if (driverRaces.isEmpty()) {
-                return new DriverStatsDTO(driverNumber, "Unknown", "", "", 0, 0, 0, 0, 0, null);
-            }
-
-            int firstSessionKey = driverRaces.getFirst().race().sessionKey();
-            var driverInfoFuture = CompletableFuture.supplyAsync(
-                    () -> openF1Client.getDrivers(firstSessionKey).stream()
-                            .filter(d -> d.driverNumber() == driverNumber)
-                            .findFirst().orElse(null),
-                    executor);
-
-            List<RaceEntry> finishedRaces = driverRaces.stream()
-                    .filter(e -> !e.result().dnf() && !e.result().dns() && !e.result().dsq())
-                    .toList();
-
-            Map<Integer, CompletableFuture<Integer>> fastestLapFutures = finishedRaces.stream()
-                    .collect(Collectors.toMap(
-                            e -> e.race().sessionKey(),
-                            e -> CompletableFuture.supplyAsync(
-                                    () -> F1ScoringUtils.findFastestLapDriverNumber(openF1Client.getLaps(e.race().sessionKey())),
-                                    executor)));
-
-            CompletableFuture.allOf(fastestLapFutures.values().toArray(new CompletableFuture[0])).join();
-
-            int totalPoints = 0, wins = 0, podiums = 0, dnfs = 0;
-            Integer bestFinish = null;
-
-            for (RaceEntry entry : driverRaces) {
-                SessionResult result = entry.result();
-                if (result.dnf() || result.dns() || result.dsq()) {
-                    if (result.dnf()) dnfs++;
-                    continue;
-                }
-                int fastestLap = fastestLapFutures.get(entry.race().sessionKey()).join();
-                totalPoints += F1ScoringUtils.calculatePoints(result.position(), result.driverNumber() == fastestLap);
-                if (result.position() == 1) wins++;
-                if (result.position() <= 3) podiums++;
-                if (bestFinish == null || result.position() < bestFinish) bestFinish = result.position();
-            }
-
-            Driver driver = driverInfoFuture.join();
-            return new DriverStatsDTO(
-                    driverNumber,
-                    driver != null ? driver.fullName() : "Unknown",
-                    driver != null ? driver.nameAcronym() : "",
-                    driver != null ? driver.teamName() : "",
-                    totalPoints,
-                    driverRaces.size(),
-                    wins,
-                    podiums,
-                    dnfs,
-                    bestFinish);
+        if (raceSessions.isEmpty()) {
+            return new DriverStatsDTO(driverNumber, UNKNOWN, "", "", 0, 0, 0, 0, 0, null);
         }
+
+        List<Integer> sessionKeys = raceSessions.stream().map(SessionEntity::getSessionKey).toList();
+        Map<Integer, SessionResultEntity> resultBySession = sessionResultRepository
+                .findBySessionKeyIn(sessionKeys)
+                .stream()
+                .filter(r -> r.getDriverNumber() == driverNumber)
+                .collect(Collectors.toMap(SessionResultEntity::getSessionKey, r -> r, (a, b) -> a));
+
+        if (resultBySession.isEmpty()) {
+            return new DriverStatsDTO(driverNumber, UNKNOWN, "", "", 0, 0, 0, 0, 0, null);
+        }
+
+        DriverEntity driverEntity = raceSessions.stream()
+                .filter(s -> resultBySession.containsKey(s.getSessionKey()))
+                .findFirst()
+                .flatMap(s -> driverRepository.findBySessionKeyAndDriverNumber(s.getSessionKey(), driverNumber))
+                .orElse(null);
+
+        Map<Integer, Integer> fastestLapBySession = raceSessions.stream()
+                .filter(s -> s.getFastestLapDriverNumber() != null)
+                .collect(Collectors.toMap(SessionEntity::getSessionKey, SessionEntity::getFastestLapDriverNumber));
+
+        DriverStatsAccumulator stats = new DriverStatsAccumulator();
+        raceSessions.stream()
+                .map(session -> Map.entry(session, resultBySession.get(session.getSessionKey())))
+                .filter(e -> e.getValue() != null)
+                .forEach(e -> accumulate(stats, e.getKey(), e.getValue(), fastestLapBySession));
+
+        return new DriverStatsDTO(
+                driverNumber,
+                driverEntity != null ? driverEntity.getFullName() : UNKNOWN,
+                driverEntity != null ? driverEntity.getNameAcronym() : "",
+                driverEntity != null ? driverEntity.getTeamName() : "",
+                stats.totalPoints,
+                resultBySession.size(),
+                stats.wins,
+                stats.podiums,
+                stats.dnfs,
+                stats.bestFinish);
+    }
+
+    private void accumulate(DriverStatsAccumulator stats, SessionEntity session,
+                            SessionResultEntity result, Map<Integer, Integer> fastestLapBySession) {
+        if (result.isDnf() || result.isDns() || result.isDsq()) {
+            if (result.isDnf()) stats.dnfs++;
+            return;
+        }
+
+        int position = result.getPosition() != null ? result.getPosition() : 0;
+        int fastestLapDriver = fastestLapBySession.getOrDefault(session.getSessionKey(), -1);
+        stats.totalPoints += F1ScoringUtils.calculatePoints(position, result.getDriverNumber() == fastestLapDriver);
+        if (position == 1) stats.wins++;
+        if (position <= 3) stats.podiums++;
+        if (stats.bestFinish == null || position < stats.bestFinish) stats.bestFinish = position;
+    }
+
+    private static class DriverStatsAccumulator {
+        int totalPoints;
+        int wins;
+        int podiums;
+        int dnfs;
+        Integer bestFinish;
     }
 }

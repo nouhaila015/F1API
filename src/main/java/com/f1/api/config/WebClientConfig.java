@@ -3,7 +3,6 @@ package com.f1.api.config;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.codec.ClientCodecConfigurer;
 import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
 
@@ -22,6 +21,7 @@ public class WebClientConfig {
         return WebClient.builder()
                 .baseUrl(f1ApiUrl)
                 .exchangeStrategies(strategies)
+                .defaultHeader("User-Agent", "f1-api-client/1.0")
                 .build();
     }
 }

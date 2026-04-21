@@ -6,7 +6,7 @@ public record Lap(
         @JsonProperty("driver_number")
         int driverNumber,
         @JsonProperty("lap_duration")
-        double lapDuration,
+        Double lapDuration,
         @JsonProperty("session_key")
         int sessionKey
 ) {

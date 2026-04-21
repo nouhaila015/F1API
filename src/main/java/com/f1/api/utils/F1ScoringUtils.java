@@ -11,6 +11,7 @@ public class F1ScoringUtils {
     private static final int[] SPRINT_POINTS = {8, 7, 6, 5, 4, 3, 2, 1};
     private static final int FASTEST_LAP_MAX_POSITION = 10;
 
+    private F1ScoringUtils() {}
     /**
      * Returns the points awarded for a Grand Prix finishing position.
      *
@@ -49,7 +50,7 @@ public class F1ScoringUtils {
      */
     public static int findFastestLapDriverNumber(List<Lap> laps) {
         return laps.stream()
-                .filter(lap -> lap.lapDuration() > 0)
+                .filter(lap -> lap.lapDuration() != null && lap.lapDuration() > 0)
                 .min(Comparator.comparingDouble(Lap::lapDuration))
                 .map(Lap::driverNumber)
                 .orElse(-1);

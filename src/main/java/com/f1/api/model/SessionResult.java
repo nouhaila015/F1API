@@ -1,6 +1,8 @@
 package com.f1.api.model;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.f1.api.utils.GapDeserializer;
 
 public record SessionResult(
         boolean dnf,
@@ -8,12 +10,13 @@ public record SessionResult(
         boolean dsq,
         @JsonProperty("driver_number")
         int driverNumber,
-        double duration,
+        Double duration,
         @JsonProperty("gap_to_leader")
-        String gapToLeader,
+        @JsonDeserialize(using = GapDeserializer.class)
+        Double gapToLeader,
         @JsonProperty("number_of_laps")
         int numberOfLaps,
-        int position,
+        Integer position,
         @JsonProperty("session_key")
         int sessionKey
 ) {

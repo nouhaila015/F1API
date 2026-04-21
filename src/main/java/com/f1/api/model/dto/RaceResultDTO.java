@@ -1,4 +1,4 @@
-package com.f1.api.dto;
+package com.f1.api.model.dto;
 
 public record RaceResultDTO(
         int position,
@@ -7,7 +7,7 @@ public record RaceResultDTO(
         String nameAcronym,
         String teamName,
         String teamColour,
-        String gapToLeader,
+        Double gapToLeader,
         boolean fastestLap,
         boolean dnf,
         boolean dns,

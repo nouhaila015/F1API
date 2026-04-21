@@ -1,4 +1,4 @@
-package com.f1.api.dto;
+package com.f1.api.model.dto;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
