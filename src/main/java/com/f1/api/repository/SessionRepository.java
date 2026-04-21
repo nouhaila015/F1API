@@ -14,4 +14,6 @@ public interface SessionRepository extends JpaRepository<SessionEntity, Integer>
     List<SessionEntity> findByYear(int year);
 
     boolean existsByYear(int year);
+
+    long countByYear(int year);
 }

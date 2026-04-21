@@ -1,6 +1,7 @@
 package com.f1.api.sync;
 
 import com.f1.api.client.OpenF1Client;
+import com.f1.api.exception.OpenF1Exception;
 import com.f1.api.model.entity.DriverEntity;
 import com.f1.api.model.entity.SessionEntity;
 import com.f1.api.model.entity.SessionResultEntity;
@@ -33,7 +34,7 @@ public class DataSyncService {
     private final DriverRepository driverRepository;
     private final SessionResultRepository sessionResultRepository;
 
-    // Self-injection to allow @Async and @Transactional to be proxied correctly
+    // Self-injection so @Async and @Transactional are proxied correctly
     private final DataSyncService self;
 
     private final Set<Integer> syncedYears = ConcurrentHashMap.newKeySet();
@@ -53,10 +54,6 @@ public class DataSyncService {
         return syncedYears.contains(year);
     }
 
-    /**
-     * Triggers an async sync for the given year if not already synced or syncing.
-     * Returns immediately — callers should query the DB and return whatever is available.
-     */
     public void triggerSyncIfNeeded(int year) {
         if (syncedYears.contains(year)) return;
         if (syncingYears.add(year)) {
@@ -68,8 +65,17 @@ public class DataSyncService {
     public void doSyncYear(int year) {
         try {
             syncYear(year);
-            syncedYears.add(year);
-            log.info("Sync complete for year {}", year);
+            long expected = openF1Client.getSessions(year).stream()
+                    .filter(s -> ("Race".equalsIgnoreCase(s.sessionType()) || "Sprint".equalsIgnoreCase(s.sessionType()))
+                            && s.dateEnd() != null && s.dateEnd().isBefore(OffsetDateTime.now()))
+                    .count();
+            long actual = sessionRepository.countByYear(year);
+            if (actual >= expected) {
+                syncedYears.add(year);
+                log.info("Sync complete for year {} ({} sessions)", year, actual);
+            } else {
+                log.warn("Partial sync for year {}: {}/{}. Will retry on next request.", year, actual, expected);
+            }
         } finally {
             syncingYears.remove(year);
         }
@@ -86,16 +92,21 @@ public class DataSyncService {
 
         OffsetDateTime now = OffsetDateTime.now();
         sessions.stream()
-                .filter(session -> session.dateEnd() != null && session.dateEnd().isBefore(now))
-                .filter(session -> !sessionRepository.existsById(session.sessionKey()))
+                .filter(s -> "Race".equalsIgnoreCase(s.sessionType()) || "Sprint".equalsIgnoreCase(s.sessionType()))
+                .filter(s -> s.dateEnd() != null && s.dateEnd().isBefore(now))
+                .filter(s -> !sessionRepository.existsById(s.sessionKey()))
                 .forEach(session -> {
                     try {
                         self.syncSession(session);
                         log.info("Synced session {} ({} - {})", session.sessionKey(), session.countryName(), session.sessionType());
-                    } catch (Exception e) {
-                        log.error("Failed to sync session {} ({}): {}", session.sessionKey(), session.sessionName(), e.getMessage());
+                    } catch (OpenF1Exception e) {
+                        if (e.getStatusCode() == 429) {
+                            log.warn("Rate limited — aborting sync for year {}", year);
+                            throw e;
+                        }
+                        log.error("Failed to sync session {}: {}", session.sessionKey(), e.getMessage());
                     }
-                    sleepMillis(500);
+                    sleepMillis(2000);
                 });
     }
 
@@ -105,44 +116,33 @@ public class DataSyncService {
         boolean isSprint = "Sprint".equalsIgnoreCase(session.sessionType());
 
         List<Driver> drivers = openF1Client.getDrivers(sessionKey);
-        sleepMillis(400);
+        sleepMillis(2000);
         List<SessionResult> results = openF1Client.getSessionResults(sessionKey);
-        sleepMillis(400);
+        sleepMillis(2000);
 
         Integer fastestLapDriverNumber = null;
         if (!isSprint) {
             var laps = openF1Client.getLaps(sessionKey);
             int found = F1ScoringUtils.findFastestLapDriverNumber(laps);
             fastestLapDriverNumber = found >= 0 ? found : null;
-            sleepMillis(400);
+            sleepMillis(2000);
         }
 
-        SessionEntity sessionEntity = new SessionEntity(
-                sessionKey,
-                session.circuitShortName(),
-                session.countryCode(),
-                session.countryName(),
-                session.dateEnd(),
-                session.dateStart(),
-                session.sessionName(),
-                session.sessionType(),
-                session.year(),
-                fastestLapDriverNumber
-        );
-        sessionRepository.save(sessionEntity);
+        sessionRepository.save(new SessionEntity(
+                sessionKey, session.circuitShortName(), session.countryCode(), session.countryName(),
+                session.dateEnd(), session.dateStart(), session.sessionName(), session.sessionType(),
+                session.year(), fastestLapDriverNumber));
 
-        List<DriverEntity> driverEntities = drivers.stream()
+        driverRepository.saveAll(drivers.stream()
                 .map(d -> new DriverEntity(sessionKey, d.driverNumber(), d.countryCode(),
                         d.firstName(), d.fullName(), d.lastName(), d.headshotURL(),
                         d.nameAcronym(), d.teamColour(), d.teamName()))
-                .toList();
-        driverRepository.saveAll(driverEntities);
+                .toList());
 
-        List<SessionResultEntity> resultEntities = results.stream()
+        sessionResultRepository.saveAll(results.stream()
                 .map(r -> new SessionResultEntity(sessionKey, r.driverNumber(), r.dnf(), r.dns(), r.dsq(),
                         r.duration(), r.gapToLeader(), r.numberOfLaps(), r.position()))
-                .toList();
-        sessionResultRepository.saveAll(resultEntities);
+                .toList());
     }
 
     private void sleepMillis(long ms) {

@@ -108,9 +108,8 @@ public class RaceService {
 
         DriverStatsAccumulator stats = new DriverStatsAccumulator();
         raceSessions.stream()
-                .map(session -> Map.entry(session, resultBySession.get(session.getSessionKey())))
-                .filter(e -> e.getValue() != null)
-                .forEach(e -> accumulate(stats, e.getKey(), e.getValue(), fastestLapBySession));
+                .filter(session -> resultBySession.containsKey(session.getSessionKey()))
+                .forEach(session -> accumulate(stats, session, resultBySession.get(session.getSessionKey()), fastestLapBySession));
 
         return new DriverStatsDTO(
                 driverNumber,
@@ -133,11 +132,22 @@ public class RaceService {
         }
 
         int position = result.getPosition() != null ? result.getPosition() : 0;
-        int fastestLapDriver = fastestLapBySession.getOrDefault(session.getSessionKey(), -1);
-        stats.totalPoints += F1ScoringUtils.calculatePoints(position, result.getDriverNumber() == fastestLapDriver);
-        if (position == 1) stats.wins++;
-        if (position <= 3) stats.podiums++;
-        if (stats.bestFinish == null || position < stats.bestFinish) stats.bestFinish = position;
+        boolean isSprint = "Sprint".equalsIgnoreCase(session.getSessionName());
+
+        // Points count for both GP and Sprint
+        if (isSprint) {
+            stats.totalPoints += F1ScoringUtils.calculateSprintPoints(position);
+        } else {
+            int fastestLapDriver = fastestLapBySession.getOrDefault(session.getSessionKey(), -1);
+            stats.totalPoints += F1ScoringUtils.calculatePoints(position, result.getDriverNumber() == fastestLapDriver);
+        }
+
+        // Wins, podiums, and bestFinish only count Grand Prix (not Sprints)
+        if (!isSprint) {
+            if (position == 1) stats.wins++;
+            if (position <= 3) stats.podiums++;
+            if (stats.bestFinish == null || position < stats.bestFinish) stats.bestFinish = position;
+        }
     }
 
     private static class DriverStatsAccumulator {
