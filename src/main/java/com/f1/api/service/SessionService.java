@@ -20,6 +20,14 @@ public class SessionService {
         this.dataSyncService = dataSyncService;
     }
 
+    /**
+     * Returns all Grand Prix sessions for the given championship year, ordered by date.
+     * Triggers a background data sync if the year has not been synced yet.
+     * Results are cached under {@code seasonRaces} once the sync is complete.
+     *
+     * @param year championship year (e.g. 2024)
+     * @return race sessions sorted by start date, never {@code null}
+     */
     @Cacheable(value = "seasonRaces", condition = "@dataSyncService.isSynced(#year)")
     public List<Session> getSeasonRaces(int year) {
         dataSyncService.triggerSyncIfNeeded(year);
@@ -30,6 +38,14 @@ public class SessionService {
                 .toList();
     }
 
+    /**
+     * Returns all points-scoring sessions (Grand Prix + Sprint) for the given year, ordered by date.
+     * Used by the scoring engine to calculate standings.
+     * Results are cached under {@code pointsSessions} once the sync is complete.
+     *
+     * @param year championship year (e.g. 2024)
+     * @return race and sprint sessions sorted by start date, never {@code null}
+     */
     @Cacheable(value = "pointsSessions", condition = "@dataSyncService.isSynced(#year)")
     public List<Session> getPointsSessions(int year) {
         dataSyncService.triggerSyncIfNeeded(year);

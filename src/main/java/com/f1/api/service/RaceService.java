@@ -39,6 +39,14 @@ public class RaceService {
         this.dataSyncService = dataSyncService;
     }
 
+    /**
+     * Returns the classified results for a single race or sprint session.
+     * Finishers are sorted by position; DNF/DNS/DSQ entries are sorted to the end.
+     * Results are cached under {@code raceResults} keyed by session.
+     *
+     * @param sessionKey OpenF1 session key
+     * @return ordered list of race results, never {@code null}
+     */
     @Cacheable("raceResults")
     public List<RaceResultDTO> getRaceResults(int sessionKey) {
         log.info("Loading race results for session {} from DB", sessionKey);
@@ -73,6 +81,16 @@ public class RaceService {
                 .toList();
     }
 
+    /**
+     * Returns aggregated season statistics for a single driver.
+     * Covers Grand Prix results only for wins, podiums, and best finish;
+     * sprint points are included in the total points tally.
+     * Results are cached under {@code driverStats} once the year is fully synced.
+     *
+     * @param driverNumber official F1 car number (e.g. 1 for Verstappen)
+     * @param year         championship year (e.g. 2024)
+     * @return driver stats DTO; returns zeroed DTO if the driver has no results
+     */
     @Cacheable(value = "driverStats", condition = "@dataSyncService.isSynced(#year)")
     public DriverStatsDTO getDriverStats(int driverNumber, int year) {
         log.info("Loading stats for driver {} in year {} from DB", driverNumber, year);

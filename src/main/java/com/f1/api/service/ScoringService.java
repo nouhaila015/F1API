@@ -46,6 +46,16 @@ public class ScoringService {
         this.dataSyncService = dataSyncService;
     }
 
+    /**
+     * Computes and returns the driver championship standings for the given year.
+     * Points are accumulated across all Grand Prix and Sprint sessions using the
+     * official F1 scoring system (see {@link com.f1.api.utils.F1ScoringUtils}).
+     * The fastest-lap bonus point is applied to the GP winner if they finish in the top 10.
+     * Results are cached under {@code driverStandings} once the year is fully synced.
+     *
+     * @param year championship year (e.g. 2024)
+     * @return standings sorted by points descending with 1-based positions assigned
+     */
     @Cacheable(value = "driverStandings", condition = "@dataSyncService.isSynced(#year)")
     public List<DriverStandingDTO> getDriverStandings(int year) {
         log.info("Computing driver standings for year {} from DB", year);
@@ -73,6 +83,14 @@ public class ScoringService {
         return standings;
     }
 
+    /**
+     * Computes and returns the constructor championship standings for the given year.
+     * Team points are the sum of all their drivers' points across Grand Prix and Sprint sessions.
+     * Results are cached under {@code teamStandings} once the year is fully synced.
+     *
+     * @param year championship year (e.g. 2024)
+     * @return standings sorted by points descending with 1-based positions assigned
+     */
     @Cacheable(value = "teamStandings", condition = "@dataSyncService.isSynced(#year)")
     public List<TeamStandingDTO> getTeamStandings(int year) {
         log.info("Computing team standings for year {} from DB", year);
