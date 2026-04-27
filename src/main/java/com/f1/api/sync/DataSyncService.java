@@ -40,6 +40,8 @@ public class DataSyncService {
     private final Set<Integer> syncedYears = ConcurrentHashMap.newKeySet();
     private final Set<Integer> syncingYears = ConcurrentHashMap.newKeySet();
 
+    private static final String SPRINT = "Sprint";
+
     public DataSyncService(OpenF1Client openF1Client, SessionRepository sessionRepository,
                            DriverRepository driverRepository, SessionResultRepository sessionResultRepository,
                            @Lazy DataSyncService self) {
@@ -66,7 +68,7 @@ public class DataSyncService {
         try {
             syncYear(year);
             long expected = openF1Client.getSessions(year).stream()
-                    .filter(s -> ("Race".equalsIgnoreCase(s.sessionType()) || "Sprint".equalsIgnoreCase(s.sessionType()))
+                    .filter(s -> ("Race".equalsIgnoreCase(s.sessionType()) || SPRINT.equalsIgnoreCase(s.sessionType()))
                             && s.dateEnd() != null && s.dateEnd().isBefore(OffsetDateTime.now()))
                     .count();
             long actual = sessionRepository.countByYear(year);
@@ -92,7 +94,7 @@ public class DataSyncService {
 
         OffsetDateTime now = OffsetDateTime.now();
         sessions.stream()
-                .filter(s -> "Race".equalsIgnoreCase(s.sessionType()) || "Sprint".equalsIgnoreCase(s.sessionType()))
+                .filter(s -> "Race".equalsIgnoreCase(s.sessionType()) || SPRINT.equalsIgnoreCase(s.sessionType()))
                 .filter(s -> s.dateEnd() != null && s.dateEnd().isBefore(now))
                 .filter(s -> !sessionRepository.existsById(s.sessionKey()))
                 .forEach(session -> {
@@ -113,7 +115,7 @@ public class DataSyncService {
     @Transactional
     public void syncSession(Session session) {
         int sessionKey = session.sessionKey();
-        boolean isSprint = "Sprint".equalsIgnoreCase(session.sessionType());
+        boolean isSprint = SPRINT.equalsIgnoreCase(session.sessionType());
 
         List<Driver> drivers = openF1Client.getDrivers(sessionKey);
         sleepMillis(2000);
