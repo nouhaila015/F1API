@@ -83,7 +83,3 @@ Controller → Service → Repository (PostgreSQL)
 ## Caching
 
 All expensive reads are `@Cacheable` (Caffeine, in-memory, 1-hour TTL). The cache is **not** persisted — it resets on restart. Cache names: `raceResults`, `driverStats`, `seasonRaces`, `pointsSessions`, `driverStandings`, `teamStandings`.
-
-## Roadmap
-
-See `todo.txt` for upcoming phases, including a what-if standings simulator (Phase 5).
